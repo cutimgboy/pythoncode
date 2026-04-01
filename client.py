@@ -1,64 +1,102 @@
+import os
 import requests
+import json
+from dotenv import load_dotenv
+from typing import List, Dict
 
-class OpenAICompatibleClient:
+# 加载 .env 文件中的环境变量
+load_dotenv()
+
+class HelloAgentsLLM:
     """
     纯 requests 实现，兼容你提供的新模型接口 https://api.edgefn.net/v1/chat/completions
     """
-    def __init__(self, model: str, api_key: str, base_url: str):
-        self.model = model
-        self.api_key = api_key
+    def __init__(self, model: str = None, api_key: str = None, base_url: str = None, timeout: int = None):
+        self.model = model or os.getenv("LLM_MODEL_ID")
+        self.api_key = api_key or os.getenv("LLM_API_KEY")
         # 自动拼接完整接口地址
-        self.api_url = base_url.rstrip("/") + "/chat/completions"
-
-    def generate(self, prompt: str, system_prompt: str = None) -> str:
-        """调用LLM API来生成回应。"""
-        print("正在调用大语言模型...")
-
-        # 请求头
-        headers = {
+        self.base_url = base_url or os.getenv("LLM_BASE_URL")
+        self.api_url = self.base_url.rstrip("/") + "/chat/completions"
+        self.timeout = timeout or int(os.getenv("LLM_TIMEOUT", 60))
+        self.headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
 
-        # 消息格式（兼容 system + user）
-        messages = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
-
-        # 请求体
+    def think(self, messages: List[Dict[str, str]], temperature: float = 0) -> str:
+        """调用LLM API流式输出并返回完整结果"""
         data = {
             "model": self.model,
-            "messages": messages
+            "messages": messages,
+            "temperature": temperature,
+            "stream": True
         }
 
         try:
-            # 发送 POST 请求
-            response = requests.post(self.api_url, headers=headers, json=data)
-            response.raise_for_status()  # 自动抛出 HTTP 错误
+            response = requests.post(
+                self.api_url,
+                headers=self.headers,
+                json=data,
+                stream=True
+            )
+            response.raise_for_status()
 
-            result = response.json()
-            # 标准 OpenAI 格式取值
-            answer = result["choices"][0]["message"]["content"]
+            print("✅ 大语言模型响应成功:")
+            collected_content = []
 
-            print("大语言模型响应成功。")
-            return answer
+            for line in response.iter_lines():
+                if not line:
+                    continue
+
+                line_text = line.decode("utf-8").strip()
+                if not line_text.startswith("data: "):
+                    continue
+
+                json_str = line_text[6:]  # 去掉 "data: "
+
+                # 结束标志
+                if json_str.strip() == "[DONE]":
+                    break
+
+                try:
+                    result = json.loads(json_str)
+                except:
+                    continue
+
+                # ✅ 超级安全取值，彻底解决 list index out of range
+                choices = result.get("choices", [])
+                if not choices:
+                    continue
+
+                choice = choices[0]
+                delta = choice.get("delta", {})
+                content = delta.get("content", "")
+
+                if content:
+                    print(content, end="", flush=True)
+                    collected_content.append(content)
+
+            print()
+            return "".join(collected_content)
 
         except Exception as e:
             print(f"调用LLM API时发生错误: {e}")
-            return "错误: 调用语言模型服务时出错。"
+            return f"[错误] {str(e)}"
 
 if __name__ == "__main__":
-    client = OpenAICompatibleClient(
-        model="DeepSeek-R1-0528-Qwen3-8B",
-        api_key="sk-ZxiqmnoVAC3rwiWJ1289Fa38C32b4473A70e5eF238A7B582",
-        base_url="https://api.edgefn.net/v1"
-    )
+    try:
+        llmClient = HelloAgentsLLM()
 
-    # 调用
-    response = client.generate(
-        prompt="Hello, how are you?",
-        system_prompt="你是一个有用的助手"
-    )
+        exampleMessages = [
+            {"role": "system", "content": "You are a helpful assistant that writes Python code."},
+            {"role": "user", "content": "写一个快速排序算法"}
+        ]
 
-    print(response)
+        print("--- 调用LLM ---")
+        responseText = llmClient.think(exampleMessages)
+        if responseText:
+            print("\n\n--- 完整模型响应 ---")
+            print(responseText)
+
+    except ValueError as e:
+        print(e)

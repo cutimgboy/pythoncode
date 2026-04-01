@@ -1,3 +1,3 @@
 # pythoncode
 hello agents 
-5 分钟实现第一个智能体
+实现经典范式
