@@ -1,1 +1,1 @@
-from .reAct_template import REACT_PROMPT_TEMPLATE
+from .template import PLANNER_PROMPT_TEMPLATE, EXECUTOR_PROMPT_TEMPLATE
